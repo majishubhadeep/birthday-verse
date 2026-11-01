@@ -9,35 +9,56 @@ const { Pool } = pg;
 
 let pool: pg.Pool | null = null;
 let isPostgresInitialized = false;
+let initPromise: Promise<boolean> | null = null;
 
-// Fallback JSON data store path for local development before DATABASE_URL is set
-const LOCAL_DATA_DIR = path.resolve(process.cwd(), 'data');
+// Serverless-safe fallback JSON data store path
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const LOCAL_DATA_DIR = isServerless
+  ? path.resolve('/tmp', 'birthday_verse_data')
+  : path.resolve(process.cwd(), 'data');
 const LOCAL_DATA_FILE = path.join(LOCAL_DATA_DIR, 'profiles.json');
 
+// In-memory fallback if disk operations fail on serverless
+let inMemoryProfilesFallback: Profile[] = [...INITIAL_PROFILES];
+
 function ensureLocalDataDir() {
-  if (!fs.existsSync(LOCAL_DATA_DIR)) {
-    fs.mkdirSync(LOCAL_DATA_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(LOCAL_DATA_FILE)) {
-    fs.writeFileSync(LOCAL_DATA_FILE, JSON.stringify(INITIAL_PROFILES, null, 2), 'utf8');
+  try {
+    if (!fs.existsSync(LOCAL_DATA_DIR)) {
+      fs.mkdirSync(LOCAL_DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(LOCAL_DATA_FILE)) {
+      fs.writeFileSync(LOCAL_DATA_FILE, JSON.stringify(INITIAL_PROFILES, null, 2), 'utf8');
+    }
+  } catch {
+    // Gracefully ignore filesystem write limitations in read-only serverless lambdas
   }
 }
 
 function getLocalProfiles(): Profile[] {
   ensureLocalDataDir();
   try {
-    const raw = fs.readFileSync(LOCAL_DATA_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_PROFILES;
-  } catch (err) {
-    console.error('Failed to read local profiles fallback:', err);
-    return INITIAL_PROFILES;
+    if (fs.existsSync(LOCAL_DATA_FILE)) {
+      const raw = fs.readFileSync(LOCAL_DATA_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        inMemoryProfilesFallback = parsed;
+        return parsed;
+      }
+    }
+  } catch {
+    // In-memory profiles used if file read fails
   }
+  return inMemoryProfilesFallback.length > 0 ? inMemoryProfilesFallback : INITIAL_PROFILES;
 }
 
 function saveLocalProfiles(profiles: Profile[]) {
+  inMemoryProfilesFallback = profiles;
   ensureLocalDataDir();
-  fs.writeFileSync(LOCAL_DATA_FILE, JSON.stringify(profiles, null, 2), 'utf8');
+  try {
+    fs.writeFileSync(LOCAL_DATA_FILE, JSON.stringify(profiles, null, 2), 'utf8');
+  } catch {
+    // In-memory profiles updated
+  }
 }
 
 export async function getDbPool(): Promise<pg.Pool | null> {
@@ -143,6 +164,25 @@ export async function initDatabase(): Promise<boolean> {
   }
 }
 
+export async function ensureDatabaseInitialized(): Promise<boolean> {
+  if (isPostgresInitialized) return true;
+  if (!initPromise) {
+    initPromise = initDatabase()
+      .then((success) => {
+        if (!success) {
+          initPromise = null;
+        }
+        return success;
+      })
+      .catch((err) => {
+        console.error('[Database Init Error]:', err);
+        initPromise = null;
+        return false;
+      });
+  }
+  return initPromise;
+}
+
 function mapRowToProfile(row: any): Profile {
   return {
     id: row.id,
@@ -163,6 +203,7 @@ function mapRowToProfile(row: any): Profile {
 }
 
 export async function getAllProfiles(): Promise<Profile[]> {
+  await ensureDatabaseInitialized();
   const currentPool = await getDbPool();
   if (currentPool && isPostgresInitialized) {
     try {
@@ -178,6 +219,7 @@ export async function getAllProfiles(): Promise<Profile[]> {
 }
 
 export async function saveProfileToDb(profile: Profile): Promise<Profile> {
+  await ensureDatabaseInitialized();
   const currentPool = await getDbPool();
   if (currentPool && isPostgresInitialized) {
     try {
@@ -236,6 +278,7 @@ export async function saveProfileToDb(profile: Profile): Promise<Profile> {
 }
 
 export async function deleteProfileFromDb(id: string): Promise<boolean> {
+  await ensureDatabaseInitialized();
   const currentPool = await getDbPool();
   if (currentPool && isPostgresInitialized) {
     try {
@@ -253,6 +296,7 @@ export async function deleteProfileFromDb(id: string): Promise<boolean> {
 }
 
 export async function resetProfilesInDb(defaults: Profile[] = INITIAL_PROFILES): Promise<Profile[]> {
+  await ensureDatabaseInitialized();
   const currentPool = await getDbPool();
   if (currentPool && isPostgresInitialized) {
     try {
@@ -304,6 +348,7 @@ export async function getDbStatus(): Promise<{
   count: number;
   message: string;
 }> {
+  await ensureDatabaseInitialized();
   const currentPool = await getDbPool();
   if (currentPool && isPostgresInitialized) {
     try {
