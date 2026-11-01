@@ -1,0 +1,8 @@
+{
+  "name": "Remix Birthday Verse",
+  "description": "A magical, personalized birthday celebration portal with tailored wishes, portraits, and quotes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

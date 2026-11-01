@@ -1,0 +1,31 @@
+// Prisma schema for Birthday Verse Neon PostgreSQL database
+// Synchronized with the production "profiles" table
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Profile {
+  id               String    @id @db.VarChar(120)
+  name             String    @db.VarChar(255)
+  gender           String    @db.VarChar(30)
+  birthdate        String    @db.VarChar(50)
+  photoUrl         String    @map("photo_url") @db.Text
+  photoPosition    String?   @default("center 20%") @map("photo_position") @db.VarChar(100)
+  photoScale       Float?    @default(1.15) @map("photo_scale") @db.Real
+  originalPhotoUrl String?   @map("original_photo_url") @db.Text
+  relationship     String?   @default("Friend") @db.VarChar(100)
+  wish             String    @db.Text
+  quote            String    @db.Text
+  quoteAuthor      String?   @default("Birthday Verse") @map("quote_author") @db.VarChar(255)
+  songUrl          String?   @map("song_url") @db.Text
+  createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("profiles")
+}
